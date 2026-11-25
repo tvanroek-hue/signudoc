@@ -171,3 +171,15 @@ test("a new install's form is told about every field at once, the account's incl
     ["supportAddress"],
   );
 });
+
+test("production first-run setup asks for a setup token before it is configured", () => {
+  assert.deepEqual(
+    resolveSetupView({ status: "fresh" }, { env: { NODE_ENV: "production" } }),
+    {
+      asksForSupportAddress: true,
+      requiresToken: true,
+      senderAddressFromEnv: false,
+      view: "create",
+    },
+  );
+});

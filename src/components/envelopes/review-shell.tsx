@@ -31,6 +31,7 @@ const redirectDelayMs = 1200;
 const defaultSendErrorMessage = "Failed to send. Please try again.";
 
 type ReviewShellProps = {
+  ownerOnly?: boolean;
   envelopeId: string;
   initialState?: "error";
   record?: ReviewEnvelopeData;
@@ -90,6 +91,7 @@ function buildSuccessMessage(firstSignerName: string) {
 }
 
 export function ReviewShell({
+  ownerOnly = false,
   envelopeId,
   initialState,
   record,
@@ -97,6 +99,7 @@ export function ReviewShell({
   const [deadlineDays, setDeadlineDays] = useState<number>(
     DEFAULT_ENVELOPE_DEADLINE_DAYS,
   );
+  const [confidential, setConfidential] = useState(false);
   const [reminderDays, setReminderDays] = useState<number | null>(
     DEFAULT_ENVELOPE_REMINDER_DAYS,
   );
@@ -148,6 +151,7 @@ export function ReviewShell({
     try {
       const response = await fetch(`/api/envelopes/${envelopeId}/send`, {
         body: JSON.stringify({
+          confidential,
           expiresInDays: deadlineDays,
           permittedUseConfirmed: true,
           reminderIntervalDays: reminderDays,
@@ -495,6 +499,24 @@ export function ReviewShell({
               </div>
             ) : null}
           </article>
+        </div>
+
+        <div className="well mt-5 space-y-2 px-5 py-4">
+          <label className="flex items-center gap-3">
+            <input
+              checked={confidential}
+              onChange={(event) => setConfidential(event.target.checked)}
+              type="checkbox"
+            />
+            Confidential envelope
+          </label>
+          <p className="text-sm text-(--secondary)">
+            {confidential
+              ? "Only you and the named signers or approvers can open this envelope through SignuDoc. Each needs an access code, shared separately. Remove copy-only recipients."
+              : ownerOnly
+                ? "Workspace document access is limited to the sender. Select Confidential to require access codes for every recipient."
+                : "Workspace administrators and teammates can view and download sent envelopes. Select Confidential to restrict access and require a code for every recipient."}
+          </p>
         </div>
 
         {disabledReason ? (

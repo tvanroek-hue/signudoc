@@ -1,5 +1,9 @@
 import { type DbExecutor, getDb, queryOne } from "./db/connection.ts";
 
+export function envelopeSharingEnabled(): boolean {
+  return process.env.ENVELOPE_ACCESS !== "owner-only";
+}
+
 // Whose envelope a signed-in account is looking at. Its sender sees it, as
 // before. Someone on a team with the sender sees it once it has been sent,
 // to read and download. An administrator sees every envelope in the
@@ -22,6 +26,7 @@ export type EnvelopeViewerAccess = {
 };
 
 type AccessRow = {
+  confidential: boolean;
   ownerEmail: string;
   ownerName: string | null;
   ownerUserId: string;
@@ -68,6 +73,7 @@ export async function resolveEnvelopeViewerAccess(
         owner.email AS "ownerEmail",
         owner.name AS "ownerName",
         e.status,
+        e.confidential,
         (SELECT role FROM public."user" WHERE id = $2) AS "viewerRole",
         ${sharesTeamCondition("$2", "e")} AS "sharesTeam"
       FROM envelopes e
@@ -87,7 +93,10 @@ export async function resolveEnvelopeViewerAccess(
   // never their draft.
   if (
     !viewerIsOwner &&
-    ((row.viewerRole !== "admin" && !row.sharesTeam) || row.status === "draft")
+    (row.confidential ||
+      !envelopeSharingEnabled() ||
+      (row.viewerRole !== "admin" && !row.sharesTeam) ||
+      row.status === "draft")
   ) {
     return null;
   }

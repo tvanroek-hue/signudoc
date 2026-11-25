@@ -241,7 +241,7 @@ Files stay on disk and emails are written to `.data/outbox` instead of being sen
 ## Built on Vercel
 
 - **Vercel-native from end to end.** Next.js 16 on Vercel Functions, Neon Postgres and Resend from the Vercel Marketplace, private Vercel Blob storage with direct browser uploads, daily Vercel cron jobs for reminders, cleanup, backups and webhook retries, and optional [Vercel BotID](https://vercel.com/docs/botid).
-- **Secure by default.** Private file storage with no public URLs, a strict Content Security Policy, rate limits kept in Postgres, signing links that are hashed at rest, sign-in lockout, and a setup page that only the first visitor, or the holder of a `SETUP_TOKEN`, can use.
+- **Secure by default.** Private file storage with no public URLs, a strict Content Security Policy, rate limits kept in Postgres, signing links that are hashed at rest, sign-in lockout, and a setup page that requires `SETUP_TOKEN` on public production installs.
 - **Tested.** Unit tests, database tests against a real Postgres, and a browser test that sets up a fresh install, sends a document and signs it, run on every pull request.
 
 ## Using SignuDoc for real agreements

@@ -475,6 +475,7 @@ export async function runBackup({
       found = await source.get(original.pathname);
 
       if (!found) {
+        summary.fileFailures.push(original.pathname);
         continue;
       }
 
@@ -779,8 +780,8 @@ export type RevokedCredentials = {
  *   again.
  *
  * The rate limit counts go too: they are kept for minutes, not as records.
- * Download links for finished documents are kept: nothing ends them early,
- * so the backup's are the same as the live ones were.
+ * Recipient download links and queued messages are revoked, since their
+ * authorization may have changed after the backup was taken.
  */
 export async function revokeRestoredCredentials(
   client: Pick<DbPool, "query">,
@@ -789,6 +790,12 @@ export async function revokeRestoredCredentials(
   const verifications = await client.query(`DELETE FROM verification`);
 
   await client.query(`DELETE FROM rate_limits`);
+  await client.query(`
+    UPDATE signing_email_deliveries
+    SET status = 'cancelled', payload = NULL, locked_until = NULL
+    WHERE status IN ('pending', 'failed')
+  `);
+  await client.query(`DELETE FROM recipient_download_tokens`);
 
   const signingLinks = await client.query(
     `

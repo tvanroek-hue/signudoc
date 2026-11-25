@@ -22,6 +22,7 @@ type EnvelopeSendRouteContext = {
 };
 
 type SendEnvelopeRequest = {
+  confidential?: unknown;
   expiresInDays?: unknown;
   reminderIntervalDays?: unknown;
   signatureLevel?: unknown;
@@ -70,6 +71,7 @@ export async function POST(
   }
 
   const options = sendEnvelopeOptionsSchema.safeParse({
+    confidential: body.confidential,
     expiresInDays: body.expiresInDays ?? undefined,
     reminderIntervalDays: body.reminderIntervalDays ?? undefined,
     signatureLevel: body.signatureLevel ?? undefined,
@@ -90,6 +92,7 @@ export async function POST(
       session.user.id,
       id,
       {
+        confidential: options.data.confidential,
         expiresInDays: options.data.expiresInDays,
         reminderIntervalDays: options.data.reminderIntervalDays,
         signatureLevel: options.data.signatureLevel,

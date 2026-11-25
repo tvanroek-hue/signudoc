@@ -579,3 +579,42 @@ test("taking someone off the team takes away what they could see", async () => {
     await addTeamMember(actor, teamId, { email: teammate.email }, database);
   }
 });
+
+test("confidential envelopes stay out of administrator and team views", async () => {
+  await database.query(
+    "UPDATE envelopes SET confidential = true WHERE id = $1",
+    [envelopes.completed],
+  );
+  try {
+    assert.ok(
+      await resolveEnvelopeViewerAccess(
+        owner.id,
+        envelopes.completed,
+        database,
+      ),
+    );
+    assert.equal(
+      await resolveEnvelopeViewerAccess(
+        teammate.id,
+        envelopes.completed,
+        database,
+      ),
+      null,
+    );
+    assert.equal(
+      await resolveEnvelopeViewerAccess(
+        admin.id,
+        envelopes.completed,
+        database,
+      ),
+      null,
+    );
+    assert.ok(!(await listed(admin, "all")).includes(envelopes.completed));
+    assert.ok(!(await listed(teammate, "team")).includes(envelopes.completed));
+  } finally {
+    await database.query(
+      "UPDATE envelopes SET confidential = false WHERE id = $1",
+      [envelopes.completed],
+    );
+  }
+});

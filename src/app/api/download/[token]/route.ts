@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db/connection";
 import { createDownloadResponse } from "@/lib/download-response";
 import {
   DownloadAccessError,
+  DownloadCodeRequiredError,
   ExpiredDownloadLinkError,
   getPublicEnvelopeDownloadForToken,
 } from "@/lib/downloads";
@@ -23,10 +24,7 @@ type PublicDownloadRouteContext = {
   }>;
 };
 
-export async function GET(
-  request: Request,
-  context: PublicDownloadRouteContext,
-) {
+async function handle(request: Request, context: PublicDownloadRouteContext) {
   const { token } = await context.params;
   const rateLimitResponse = await applyPublicLinkRateLimit({
     category: "public_download",
@@ -52,8 +50,14 @@ export async function GET(
   }
 
   try {
+    const form =
+      request.method === "POST"
+        ? await request.formData().catch(() => null)
+        : null;
+    const accessCode = form?.get("accessCode");
     const download = await getPublicEnvelopeDownloadForToken(token, {
       database: getDb(),
+      accessCode: typeof accessCode === "string" ? accessCode : undefined,
     });
 
     return await createDownloadResponse(download);
@@ -67,6 +71,21 @@ export async function GET(
         ),
         { headers: { "cache-control": "private, no-store" }, status: 303 },
       );
+    }
+
+    if (error instanceof DownloadCodeRequiredError) {
+      const url = new URL(
+        `/download/${encodeURIComponent(token)}`,
+        resolveAppUrl() ?? request.url,
+      );
+      url.searchParams.set(
+        "access",
+        request.method === "POST" ? "retry" : "required",
+      );
+      return NextResponse.redirect(url, {
+        headers: { "cache-control": "private, no-store" },
+        status: 303,
+      });
     }
 
     if (error instanceof DownloadAccessError) {
@@ -94,4 +113,12 @@ export async function GET(
       status: 500,
     });
   }
+}
+
+export function GET(request: Request, context: PublicDownloadRouteContext) {
+  return handle(request, context);
+}
+
+export function POST(request: Request, context: PublicDownloadRouteContext) {
+  return handle(request, context);
 }

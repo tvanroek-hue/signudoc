@@ -29,6 +29,7 @@ type SecurityLogInput = {
 
 const TOKEN_PATH_PATTERNS = [
   /^\/sign\/[^/]+/i,
+  /^\/embed\/sign\/[^/]+/i,
   /^\/api\/signing\/[^/]+/i,
   /^\/api\/download\/[^/]+/i,
   /^\/download\/[^/]+/i,

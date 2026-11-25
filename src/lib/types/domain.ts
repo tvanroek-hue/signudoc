@@ -21,7 +21,7 @@ export const MAX_PDF_PAGES = 1000;
  */
 export const MAX_REQUEST_BODY_BYTES = MAX_UPLOAD_SIZE_BYTES + 1024 * 1024;
 export const SIGNING_LINK_TTL_SECONDS = 7 * 24 * 60 * 60;
-export const RECIPIENT_DOWNLOAD_LINK_TTL_SECONDS = 7 * 24 * 60 * 60;
+export const RECIPIENT_DOWNLOAD_LINK_TTL_SECONDS = 2 * 24 * 60 * 60;
 export const MANUAL_NUDGE_COOLDOWN_SECONDS = 24 * 60 * 60;
 
 /** How long signers get, in days: what the send step offers, and its limits. */

@@ -30,6 +30,7 @@ export type VerifyResult =
     };
 
 type VerifyRow = {
+  confidential: boolean;
   approverCount: number;
   completedAt: number | null;
   declinedAt: number | null;
@@ -53,6 +54,7 @@ export async function verifyDocumentHash(
       SELECT
         e.id AS "envelopeId",
         e.title,
+        e.confidential,
         e.status,
         e.completed_at AS "completedAt",
         e.declined_at AS "declinedAt",
@@ -77,13 +79,13 @@ export async function verifyDocumentHash(
 
   return {
     approverCount: row.approverCount,
-    envelopeId: row.envelopeId,
+    envelopeId: row.confidential ? "" : row.envelopeId,
     fileKind:
       row.signedPdfSha256 === sha256 ? "signed-document" : "certificate",
     finishedAt: row.completedAt ?? row.declinedAt ?? row.voidedAt,
     match: true,
     signerCount: row.signerCount,
     status: row.status,
-    title: row.title,
+    title: row.confidential ? "Confidential document" : row.title,
   };
 }

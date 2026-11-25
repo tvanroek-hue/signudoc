@@ -38,6 +38,11 @@ import {
 import { getSignerPalette } from "./signer-palette";
 
 /** A finished envelope an administrator has scheduled to be deleted. */
+import {
+  EnvelopeDeliveryPanel,
+  type EnvelopeDeliveryRecipient,
+} from "./envelope-delivery-panel";
+
 export type EnvelopeDeletionNotice = {
   deleteOnLabel: string;
   /** Shown to administrators only. */
@@ -49,6 +54,7 @@ type EnvelopeDetailShellProps = {
   /** An administrator may delete a finished envelope. */
   canDeleteFinished?: boolean;
   envelopeId: string;
+  deliveryRecipients?: EnvelopeDeliveryRecipient[];
   initialState?: "error" | "not-found";
   /**
    * Who sent it, when an administrator or a teammate is looking at another
@@ -153,6 +159,7 @@ const timelineToneClasses: Record<TimelineTone, string> = {
 export function EnvelopeDetailShell({
   canDeleteFinished = false,
   envelopeId,
+  deliveryRecipients = [],
   initialState,
   ownerLabel,
   ownerListView = "all",
@@ -835,6 +842,16 @@ export function EnvelopeDetailShell({
               </button>
             ) : null}
           </div>
+        ) : null}
+
+        {isOwnEnvelope &&
+        (activeRecord.status === "sent" ||
+          activeRecord.status === "completed") ? (
+          <EnvelopeDeliveryPanel
+            completed={activeRecord.status === "completed"}
+            envelopeId={envelopeId}
+            recipients={deliveryRecipients}
+          />
         ) : null}
 
         {savedTemplateName ? (

@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { ReviewShell } from "@/components/envelopes/review-shell";
 import { getAuthSession } from "@/lib/auth/server";
 import { getDb } from "@/lib/db/connection";
+import { envelopeSharingEnabled } from "@/lib/envelope-access";
 import { getReviewEnvelopeDataForUser } from "@/lib/envelopes";
 
 type ReviewPageProps = {
@@ -43,6 +44,7 @@ export default async function ReviewPage({ params }: ReviewPageProps) {
       envelopeId={id}
       initialState={initialState}
       key={id}
+      ownerOnly={!envelopeSharingEnabled()}
       record={reviewRecord ?? undefined}
     />
   );

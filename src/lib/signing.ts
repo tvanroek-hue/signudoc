@@ -16,10 +16,11 @@ import {
   envelopePageSchema,
   envelopeRecordSchema,
 } from "./schemas/envelope.ts";
+import { createRecipientDownloadLink } from "./downloads.ts";
 import {
-  createRecipientDownloadLink,
-  sanitizeFileNameSegment,
-} from "./downloads.ts";
+  deliverSigningEmails,
+  queueSigningEmail,
+} from "./signing-email-deliveries.ts";
 import {
   fieldRecordSchema,
   MAX_DRAWN_SIGNATURE_BYTES,
@@ -66,8 +67,6 @@ import {
 import {
   createEmailService,
   createLazyEmailService,
-  fitsAsAttachments,
-  type EmailAttachment,
   type EmailService,
 } from "./services/email.ts";
 import { withUserEmailLegalFooter } from "./services/email-legal-footer.ts";
@@ -479,7 +478,6 @@ function buildDeclineNotificationEmail(input: {
 }
 
 function buildCompletionSignerEmail(input: {
-  attached: boolean;
   branding: Branding;
   /** True for someone who gets a copy without having signed. */
   copyOnly?: boolean;
@@ -499,9 +497,7 @@ function buildCompletionSignerEmail(input: {
     ...(input.copyOnly
       ? [`${input.senderName} asked for you to receive a copy.`]
       : []),
-    input.attached
-      ? "The completed document and its certificate are attached. Keep them: they are your copy of the agreement."
-      : "The completed document and its certificate are ready.",
+    "The completed document and its certificate are ready.",
     "",
     `Download links (available for ${RECIPIENT_DOWNLOAD_LINK_TTL_DAYS} days; an expired link offers to send a new one):`,
     `Signed PDF: ${input.signedDownloadUrl}`,
@@ -513,9 +509,7 @@ function buildCompletionSignerEmail(input: {
     input.copyOnly
       ? `<p>${escapeHtml(input.senderName)} asked for you to receive a copy.</p>`
       : "",
-    input.attached
-      ? "<p>The completed document and its certificate are attached. Keep them: they are your copy of the agreement.</p>"
-      : "<p>The completed document and its certificate are ready.</p>",
+    "<p>The completed document and its certificate are ready.</p>",
     `<p>Download links are available for ${RECIPIENT_DOWNLOAD_LINK_TTL_DAYS} days. An expired link offers to send a new one.</p>`,
     `<p><a href="${escapeHtml(input.signedDownloadUrl)}">Download signed PDF</a><br /><a href="${escapeHtml(input.evidenceDownloadUrl)}">Download redacted certificate</a></p>`,
   ].join("");
@@ -1203,40 +1197,16 @@ function applyCurrentSignerDecline(
   });
 }
 
-async function sendCompletionEmails(input: {
-  attachments: {
-    recipientCertificate: Uint8Array;
-    signedPdf: Uint8Array;
-  };
+async function queueCompletionEmails(input: {
+  branding: Branding;
   copyRecipients: readonly CopyRecipientRecord[];
-  database?: DbExecutor;
-  emailService: EmailService;
+  database: DbExecutor;
   envelopeId: string;
   envelopeTitle: string;
   sender: SenderRow;
   signers: Array<ReturnType<typeof signerRecordSchema.parse>>;
 }) {
-  const fileNameStem =
-    sanitizeFileNameSegment(input.envelopeTitle) ||
-    `envelope-${input.envelopeId}`;
-  const attachments: EmailAttachment[] = [
-    {
-      content: input.attachments.signedPdf,
-      contentType: "application/pdf",
-      filename: `${fileNameStem} - signed.pdf`,
-    },
-    {
-      content: input.attachments.recipientCertificate,
-      contentType: "application/pdf",
-      filename: `${fileNameStem} - certificate.pdf`,
-    },
-  ];
-  const attach = fitsAsAttachments(attachments);
   const senderName = normalizeSenderName(input.sender);
-  const issuedAt = Math.floor(Date.now() / 1000);
-  const branding = await getBranding();
-  // Signers first, then the people who only get a copy: the place in this
-  // list is part of each message's idempotency key.
   const recipients = [
     ...input.signers.map((signer) => ({ ...signer, copyOnly: false })),
     ...input.copyRecipients.map((recipient) => ({
@@ -1244,104 +1214,136 @@ async function sendCompletionEmails(input: {
       copyOnly: true,
     })),
   ];
-  const signerMessages = await Promise.all(
-    recipients.map(async (signer) => {
-      if (!signer.id) {
-        throw new SigningMutationError(
-          "Completed signer records must include an id.",
-          500,
-        );
-      }
 
-      const [signedLink, redactedEvidenceLink] = await Promise.all([
-        createRecipientDownloadLink(
-          {
-            envelopeId: input.envelopeId,
-            fileType: "signed",
-            issuedAt,
-            signerId: signer.id,
-          },
-          {
-            database: input.database,
-          },
-        ),
-        // Recipient certificate downloads resolve to the redacted certificate PDF.
-        createRecipientDownloadLink(
-          {
-            envelopeId: input.envelopeId,
-            fileType: "evidence",
-            issuedAt,
-            signerId: signer.id,
-          },
-          {
-            database: input.database,
-          },
-        ),
-      ]);
-
-      return {
-        message: {
-          ...buildCompletionSignerEmail({
-            attached: attach,
-            branding,
-            copyOnly: signer.copyOnly,
-            envelopeId: input.envelopeId,
-            envelopeTitle: input.envelopeTitle,
-            evidenceDownloadUrl: redactedEvidenceLink.url,
-            senderName,
-            signedDownloadUrl: signedLink.url,
-            signerEmail: signer.email,
-            signerName: signer.name,
-          }),
-          ...(attach ? { attachments } : {}),
-        },
-        signerId: signer.id,
-      };
+  await queueSigningEmail(input.database, {
+    envelopeId: input.envelopeId,
+    signerId: null,
+    message: buildCompletionSenderEmail({
+      branding: input.branding,
+      envelopeId: input.envelopeId,
+      envelopeTitle: input.envelopeTitle,
+      senderEmail: input.sender.email,
+      senderName,
     }),
-  );
-  const messages = [
-    {
-      message: buildCompletionSenderEmail({
-        branding,
-        envelopeId: input.envelopeId,
-        envelopeTitle: input.envelopeTitle,
-        senderEmail: input.sender.email,
-        senderName,
-      }),
-      signerId: null,
-    },
-    ...signerMessages,
-  ];
+  });
 
-  // One by one: Resend's batch endpoint does not take attachments. Each
-  // message is tried even if another fails, so one bad address does not cost
-  // everyone else their copy.
-  const failures: unknown[] = [];
-
-  for (const [index, { message, signerId }] of messages.entries()) {
-    try {
-      const delivery = await input.emailService.send(message, {
-        idempotencyKey: `completion/${input.envelopeId}/${String(index)}`,
-      });
-
-      await recordEmailSent(
-        {
-          envelopeId: input.envelopeId,
-          messageId: delivery.messageId,
-          recipient: message.to,
-          signerId,
-          template: "completion_notification",
-        },
-        input.database,
+  for (const signer of recipients) {
+    if (!signer.id) {
+      throw new SigningMutationError(
+        "Completed signer records must include an id.",
+        500,
       );
-    } catch (error) {
-      failures.push(error);
     }
+    await queueCompletionCopy({
+      ...input,
+      senderName,
+      recipient: { ...signer, id: signer.id },
+    });
   }
+}
 
-  if (failures.length > 0) {
-    throw new AggregateError(failures, "Some completion emails were not sent.");
-  }
+async function queueCompletionCopy(input: {
+  branding: Branding;
+  database: DbExecutor;
+  envelopeId: string;
+  envelopeTitle: string;
+  recipient: { id: string; name: string; email: string; copyOnly: boolean };
+  senderName: string;
+}) {
+  const { recipient } = input;
+  const signedLink = await createRecipientDownloadLink(
+    {
+      envelopeId: input.envelopeId,
+      fileType: "signed",
+      signerId: recipient.id,
+    },
+    { database: input.database },
+  );
+  const evidenceLink = await createRecipientDownloadLink(
+    {
+      envelopeId: input.envelopeId,
+      fileType: "evidence",
+      signerId: recipient.id,
+    },
+    { database: input.database },
+  );
+
+  await queueSigningEmail(input.database, {
+    envelopeId: input.envelopeId,
+    signerId: recipient.id,
+    tokenHash: signedLink.tokenHash,
+    message: buildCompletionSignerEmail({
+      branding: input.branding,
+      copyOnly: recipient.copyOnly,
+      envelopeId: input.envelopeId,
+      envelopeTitle: input.envelopeTitle,
+      evidenceDownloadUrl: evidenceLink.url,
+      senderName: input.senderName,
+      signedDownloadUrl: signedLink.url,
+      signerEmail: recipient.email,
+      signerName: recipient.name,
+    }),
+  });
+}
+
+export async function changeCompletedDownloadAccess(
+  userId: string,
+  envelopeId: string,
+  recipientId: string,
+  action: "revoke" | "reissue",
+  database: DbPool,
+): Promise<boolean> {
+  const branding = action === "reissue" ? await getBranding() : null;
+  return withTransaction(async (tx) => {
+    const envelope = await queryOne<{
+      title: string;
+      name: string | null;
+      email: string;
+    }>(
+      tx,
+      `SELECT e.title, u.name, u.email FROM envelopes e
+       JOIN public."user" u ON u.id = e.user_id
+       WHERE e.id = $1 AND e.user_id = $2 AND e.status = 'completed' FOR UPDATE OF e`,
+      [envelopeId, userId],
+    );
+    if (!envelope) return false;
+
+    const recipient = await queryOne<{
+      id: string;
+      name: string;
+      email: string;
+      copyOnly: boolean;
+    }>(
+      tx,
+      `SELECT id, name, email, role = 'cc' AS "copyOnly" FROM signers
+       WHERE envelope_id = $1 AND id = $2 AND (status = 'signed' OR role = 'cc')`,
+      [envelopeId, recipientId],
+    );
+    if (!recipient) return false;
+
+    await tx.query(
+      `DELETE FROM recipient_download_tokens WHERE envelope_id = $1 AND signer_id = $2`,
+      [envelopeId, recipientId],
+    );
+    await tx.query(
+      `UPDATE signing_email_deliveries
+       SET status = 'cancelled', payload = NULL, locked_until = NULL
+       WHERE envelope_id = $1 AND signer_id = $2 AND template = 'completion_notification'
+         AND status IN ('pending', 'failed')`,
+      [envelopeId, recipientId],
+    );
+    if (branding) {
+      await queueCompletionCopy({
+        branding,
+        database: tx,
+        envelopeId,
+        envelopeTitle: envelope.title,
+        recipient,
+        senderName: normalizeSenderName(envelope),
+      });
+    }
+    return true;
+  }, database);
 }
 
 /** Wrong access codes a signer may give for one code in a week. */
@@ -2853,15 +2855,18 @@ async function submitSigningOnce(
     const isLastSignature = context.signers.every(
       (signer) => signer.id === currentSignerId || signer.status === "signed",
     );
-    // Each signer of the next step gets a link of their own. When it ends
-    // is settled once the envelope is locked, from the deadline then.
-    let nextSignerDeliveries: {
-      email: string;
-      id: string;
-      name: string;
-      role: "approver" | "signer";
-      url: string;
-    }[] = [];
+    const branding = await getBranding();
+    const deliverQueuedEmails = () =>
+      deliverSigningEmails({
+        database,
+        emailService,
+        envelopeId: context.envelope.id,
+      }).catch(() => {
+        console.error(
+          "Unable to run the signing email queue.",
+          context.envelope.id,
+        );
+      });
 
     for (const upload of drawnSignatureUploads) {
       await storageService.putObject({
@@ -2905,7 +2910,6 @@ async function submitSigningOnce(
       // this signer submits, and moving it only reaches the signer whose
       // turn it is then. So it is read here, where this update holds the
       // envelope's row and a change of deadline has to wait its turn.
-      let nextSignerDeadline = context.envelope.expiresAt ?? null;
 
       await withTransaction(async (tx) => {
         const lockedEnvelope = await queryOne<{ expiresAt: number | null }>(
@@ -2927,8 +2931,6 @@ async function submitSigningOnce(
             409,
           );
         }
-
-        nextSignerDeadline = lockedEnvelope.expiresAt;
 
         if (providerSignature) {
           replacedRevisionKey = await commitProviderRevision(
@@ -3027,8 +3029,6 @@ async function submitSigningOnce(
           throw new SigningRouteChangedError();
         }
 
-        const deliveries: typeof nextSignerDeliveries = [];
-
         for (const nextSigner of route.next) {
           // Each signer of the next step gets a link of their own.
           const link = await issueSigningLink({ issuedAt: routedAt });
@@ -3071,16 +3071,24 @@ async function submitSigningOnce(
             );
           }
 
-          deliveries.push({
-            email: activatedNextSigner.email,
-            id: nextSigner.id,
-            name: activatedNextSigner.name,
-            role: activatedNextSigner.role,
-            url: link.url,
-          });
+          if (!embedded) {
+            await queueSigningEmail(tx, {
+              envelopeId: context.envelope.id,
+              signerId: nextSigner.id,
+              tokenHash: link.tokenHash,
+              message: buildSigningInvitationEmail({
+                branding,
+                envelopeTitle: context.envelope.title,
+                expiresAt: lockedEnvelope.expiresAt,
+                role: activatedNextSigner.role,
+                senderName: normalizeSenderName(context.sender),
+                signerEmail: activatedNextSigner.email,
+                signerName: activatedNextSigner.name,
+                signingUrl: link.url,
+              }),
+            });
+          }
         }
-
-        nextSignerDeliveries = deliveries;
 
         await recordAuditEvent(
           {
@@ -3100,43 +3108,7 @@ async function submitSigningOnce(
       signingStatePersisted = true;
       await deleteReplacedRevision(replacedRevisionKey, storageService);
 
-      // Nobody to invite while others in this step are still signing. In
-      // an embedded envelope nobody is emailed: the app starts the next
-      // step's turns, and the signer.signed webhook shows who is next.
-      const invitations = embedded ? [] : nextSignerDeliveries;
-
-      for (const nextSignerDelivery of invitations) {
-        try {
-          const delivery = await emailService.send(
-            buildSigningInvitationEmail({
-              branding: await getBranding(),
-              envelopeTitle: context.envelope.title,
-              expiresAt: nextSignerDeadline,
-              role: nextSignerDelivery.role,
-              senderName: normalizeSenderName(context.sender),
-              signerEmail: nextSignerDelivery.email,
-              signerName: nextSignerDelivery.name,
-              signingUrl: nextSignerDelivery.url,
-            }),
-          );
-
-          await recordEmailSent(
-            {
-              envelopeId: context.envelope.id,
-              messageId: delivery.messageId,
-              recipient: nextSignerDelivery.email,
-              signerId: nextSignerDelivery.id,
-              template: "signing_invitation",
-            },
-            database,
-          );
-        } catch (error) {
-          console.error(
-            `Failed to send next signer invitation for envelope ${context.envelope.id} to ${nextSignerDelivery.email}:`,
-            error,
-          );
-        }
-      }
+      await deliverQueuedEmails();
 
       return signingSubmitResponseSchema.parse({
         envelopeId: context.envelope.id,
@@ -3191,10 +3163,9 @@ async function submitSigningOnce(
     const seal = await loadInstallSealer();
     // Set once this submission may have stored the final files.
     let finalArtifactsStored = false;
-    let finalArtifacts: Awaited<ReturnType<typeof finalizeEnvelope>>;
 
     try {
-      finalArtifacts = await withTransaction(async (tx) => {
+      await withTransaction(async (tx) => {
         await lockSentEnvelope(context.envelope.id, tx);
         await assertStillSignersTurn(context.envelope.id, currentSignerId, tx);
         await lockSignerForPresentedToken(tx, {
@@ -3396,7 +3367,15 @@ async function submitSigningOnce(
           tx,
         );
 
-        return artifacts;
+        await queueCompletionEmails({
+          branding,
+          copyRecipients,
+          database: tx,
+          envelopeId: context.envelope.id,
+          envelopeTitle: context.envelope.title,
+          sender: context.sender,
+          signers: completedSigners,
+        });
       }, database);
       signingStatePersisted = true;
       await deleteReplacedRevision(replacedRevisionKey, storageService);
@@ -3412,26 +3391,7 @@ async function submitSigningOnce(
       throw error;
     }
 
-    try {
-      await sendCompletionEmails({
-        attachments: {
-          recipientCertificate: finalArtifacts.recipientCertificate.body,
-          signedPdf: finalArtifacts.signedPdf.body,
-        },
-        copyRecipients,
-        database,
-        emailService,
-        envelopeId: context.envelope.id,
-        envelopeTitle: context.envelope.title,
-        sender: context.sender,
-        signers: completedSigners,
-      });
-    } catch (error) {
-      console.error(
-        `Failed to send completion emails for envelope ${context.envelope.id}:`,
-        error,
-      );
-    }
+    await deliverQueuedEmails();
 
     return signingSubmitResponseSchema.parse({
       envelopeId: context.envelope.id,
