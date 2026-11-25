@@ -76,13 +76,15 @@ async function handle(request: Request) {
       source: createVercelBlobStore(),
       target: createVercelBlobStore(settings.token),
     });
-    const failed = summary.fileFailures.length > 0;
+    const failed = summary.stoppedEarly || summary.fileFailures.length > 0;
 
     logSecurityEvent(failed ? "error" : "info", {
       category: "backup_finished",
-      message: failed
-        ? `The backup finished, but ${String(summary.fileFailures.length)} files could not be copied.`
-        : "The backup finished.",
+      message: summary.stoppedEarly
+        ? "The backup is incomplete. The run reached its file-copy time limit."
+        : failed
+          ? `The backup finished, but ${String(summary.fileFailures.length)} files could not be copied.`
+          : "The backup finished.",
       metadata: { ...summary, fileFailures: summary.fileFailures.slice(0, 20) },
     });
 

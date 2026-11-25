@@ -126,7 +126,11 @@ import {
   getManualNudgeAvailableAt,
   isManualNudgeAvailable,
 } from "./services/reminders.ts";
-import { formatEnvelopeOwner, sharesTeamCondition } from "./envelope-access.ts";
+import {
+  envelopeSharingEnabled,
+  formatEnvelopeOwner,
+  sharesTeamCondition,
+} from "./envelope-access.ts";
 import { PERMITTED_USE_VERSION } from "./permitted-uses.ts";
 import { hashAccessCode } from "./signer-checks.ts";
 import {
@@ -160,6 +164,7 @@ type CreateDraftEnvelopeInput = {
 };
 
 type SendDraftEnvelopeInput = {
+  confidential?: boolean;
   /** The API key that sent it, recorded in the audit trail. */
   apiKeyId?: string | null;
   /**
@@ -2037,13 +2042,14 @@ export async function listAllEnvelopesForAdmin(
 type EnvelopeListScope = "all" | "mine" | "team";
 
 function envelopeListScopeClause(scope: EnvelopeListScope): string {
+  if (!envelopeSharingEnabled()) return "user_id = $1";
   switch (scope) {
     case "mine":
       return "user_id = $1";
     case "team":
-      return `(user_id = $1 OR (status <> 'draft' AND ${sharesTeamCondition("$1")}))`;
+      return `(user_id = $1 OR (status <> 'draft' AND NOT confidential AND ${sharesTeamCondition("$1")}))`;
     case "all":
-      return "(status <> 'draft' OR user_id = $1)";
+      return "((status <> 'draft' AND NOT confidential) OR user_id = $1)";
   }
 }
 
@@ -2782,8 +2788,23 @@ export async function sendDraftEnvelope(
     throw new EnvelopeMutationError("Only draft envelopes can be sent.", 409);
   }
 
+  const confidential = input.confidential === true;
+  if (confidential && input.delivery === "embedded") {
+    throw new EnvelopeMutationError(
+      "Confidential delivery requires direct recipient access codes.",
+      400,
+    );
+  }
+
   const checkedParties = await readDraftParties(envelopeId, database);
   const { fields, signers } = checkedParties;
+
+  if (confidential && checkedParties.copyRecipients.length > 0) {
+    throw new EnvelopeMutationError(
+      "Remove copy-only recipients to send this envelope confidentially.",
+      400,
+    );
+  }
 
   // The transaction below refuses a draft whose parties changed after this
   // read, so the people checked here are the people the invitation reaches.
@@ -3036,7 +3057,8 @@ export async function sendDraftEnvelope(
             updated_at = $2,
             expires_at = $5,
             expiry_notified_at = NULL,
-            reminder_interval_days = $6
+            reminder_interval_days = $6,
+            confidential = $7
           WHERE id = $3
             AND user_id = $4
             AND status = 'draft'
@@ -3048,6 +3070,7 @@ export async function sendDraftEnvelope(
           userId,
           expiresAt,
           input.reminderIntervalDays ?? null,
+          confidential,
         ],
       );
 
@@ -3072,6 +3095,16 @@ export async function sendDraftEnvelope(
           "This envelope was changed while it was being sent. Check it and send it again.",
           409,
         );
+      }
+
+      if (confidential) {
+        const checks = await listSignerCheckSettings(envelopeId, tx);
+        if (signers.some((signer) => !checks.get(signer.id)?.hasAccessCode)) {
+          throw new EnvelopeMutationError(
+            "Set an access code for every signer and approver before sending confidentially.",
+            400,
+          );
+        }
       }
 
       // Access codes and emailed codes are not part of that snapshot, and
@@ -3300,6 +3333,7 @@ export async function sendDraftEnvelope(
             expires_at = NULL,
             reminder_interval_days = NULL,
             part11 = false,
+            confidential = false,
             signature_level = 'simple',
             signature_provider = NULL,
             updated_at = $1

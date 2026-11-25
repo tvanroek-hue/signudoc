@@ -31,6 +31,8 @@ import {
 } from "./services/storage.ts";
 import { getRecipientCertificateKey } from "./services/storage-keys.ts";
 import { type DownloadFileType } from "./types/domain.ts";
+import { checkAccessCode } from "./signer-checks.ts";
+import { consumeRateLimit } from "./security/rate-limit.ts";
 
 type EnvelopeRow = {
   completedAt: number | null;
@@ -749,12 +751,12 @@ async function buildCertificateDownload(
   };
 }
 
-async function isRecipientAuthorizedForEnvelope(
-  signerId: string,
-  envelopeId: string,
-  database: DbExecutor,
-): Promise<boolean> {
-  return (await getSignerForEnvelope(signerId, envelopeId, database)) !== null;
+export class DownloadCodeRequiredError extends DownloadAccessError {
+  constructor(
+    message = "Enter the recipient access code to download this file.",
+  ) {
+    super(message, 403);
+  }
 }
 
 export async function getSenderEnvelopeDownload(
@@ -786,8 +788,10 @@ export async function getPublicEnvelopeDownloadForToken(
   token: string,
   {
     database = getDb(),
+    accessCode,
   }: {
     database?: DbExecutor;
+    accessCode?: string;
   } = {},
 ): Promise<EnvelopeDownloadResult> {
   const storageService = createStorageService();
@@ -817,17 +821,38 @@ export async function getPublicEnvelopeDownloadForToken(
     );
   }
 
-  if (
-    !(await isRecipientAuthorizedForEnvelope(
-      tokenRow.signerId,
-      envelope.id,
-      database,
-    ))
-  ) {
+  const recipient = await queryOne<{ accessCodeHash: string | null }>(
+    database,
+    `SELECT access_code_hash AS "accessCodeHash" FROM signers
+     WHERE id = $1 AND envelope_id = $2`,
+    [tokenRow.signerId, envelope.id],
+  );
+  if (!recipient) {
     throw new DownloadAccessError(
       "This download link is invalid or has expired.",
       410,
     );
+  }
+
+  if (recipient.accessCodeHash) {
+    if (!accessCode || accessCode.length > 128)
+      throw new DownloadCodeRequiredError();
+    const attempt = await consumeRateLimit(
+      {
+        key: `download-code:${tokenRow.signerId}`,
+        limit: 10,
+        windowMs: 60 * 60 * 1000,
+      },
+      { database },
+    );
+    if (!attempt.allowed) {
+      throw new DownloadAccessError("Too many attempts. Try again later.", 429);
+    }
+    if (!checkAccessCode(accessCode, recipient.accessCodeHash)) {
+      throw new DownloadCodeRequiredError(
+        "The access code did not match. Try again.",
+      );
+    }
   }
 
   const fileType = downloadFileTypeSchema.parse(tokenRow.fileType);

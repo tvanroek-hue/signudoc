@@ -27,7 +27,7 @@ From then on Vercel calls `/api/internal/backup` every day at 08:00 UTC (see `ve
 
 To run one by hand (while cron jobs are paused, for example), call the same address with the secret: `curl -H "Authorization: Bearer $CRON_SECRET" https://<your install>/api/internal/backup`.
 
-Each run writes a `backup_finished` line to the function logs (with the counts), or `backup_failure` if it failed. With a log drain, alert on those. The app refuses a token for its own store, because that backup would not survive what it is for.
+A run that reaches its time limit reports failure even if individual files copied successfully. Check the summary before treating a backup as complete. Each run writes a `backup_finished` line to the function logs (with the counts), or `backup_failure` if it failed. With a log drain, alert on those. The app refuses a token for its own store, because that backup would not survive what it is for.
 
 **Cost.** The backup store holds about as much as the install's store, plus the database copies. On a Vercel Hobby account, a second store in the same account counts against the same free Blob storage, so it halves how much your install can hold for $0. A store in another team has its own allowance. Each copied file is one upload to the backup store.
 
@@ -63,6 +63,7 @@ What a restore does not bring back: anything that lets someone in. A backup hold
 
 - Everyone signs in again, and password reset links and emailed codes from before the restore stop working.
 - Every signing link stops working. For each envelope still out for signature, send a reminder from its page: that emails the signer a new link. The usual wait between reminders starts over with the restore, so you can send one at once. Embedded envelopes get no reminders: the app that shows them asks for a new link through the API's [embed-link endpoint](api.md#embedded-signing).
+- Completed-document download links and queued signing emails are revoked. From **Recipient delivery**, send fresh links where needed.
 - A signature that was under way at a signing provider has to be started again.
 
 Passwords and API keys come back as they were at the time of the backup. If someone changed a password, or an administrator revoked an API key, after the backup was made, do it again. If the restore follows a break-in, also change `BETTER_AUTH_SECRET` (everyone using two-step sign-in then sets it up again, see step 4).

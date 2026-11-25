@@ -128,7 +128,7 @@ export function VerifyForm() {
               {answer.approverCount
                 ? ` and ${answer.approverCount} approver${answer.approverCount === 1 ? "" : "s"}`
                 : ""}
-              . Envelope ID {answer.envelopeId}.
+              .{answer.envelopeId ? ` Envelope ID ${answer.envelopeId}.` : ""}
             </p>
           </div>
         ) : null}

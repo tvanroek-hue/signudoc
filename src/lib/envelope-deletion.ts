@@ -42,6 +42,7 @@ const DAY_IN_SECONDS = 24 * 60 * 60;
 export const SCHEDULED_DELETIONS_PER_RUN = 100;
 
 type FinishedEnvelopeRow = {
+  confidential: boolean;
   evidenceSha256: string | null;
   finishedAt: number | null;
   id: string;
@@ -179,6 +180,7 @@ async function lockFinishedEnvelope(
         title,
         status,
         part11,
+        confidential,
         source_pdf_hash AS "sourcePdfHash",
         signed_pdf_sha256 AS "signedPdfSha256",
         evidence_sha256 AS "evidenceSha256",
@@ -192,6 +194,14 @@ async function lockFinishedEnvelope(
   );
 
   if (!envelope) {
+    throw new EnvelopeMutationError("Envelope not found.", 404);
+  }
+
+  if (
+    actorUserId !== null &&
+    actorUserId !== envelope.ownerUserId &&
+    envelope.confidential
+  ) {
     throw new EnvelopeMutationError("Envelope not found.", 404);
   }
 

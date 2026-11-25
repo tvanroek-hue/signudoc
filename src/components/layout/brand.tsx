@@ -85,28 +85,18 @@ export function BrandLogo({
   );
 }
 
-/** The signature stroke on a tile in the accent color. Decorative: the link carries the name. */
+/** The Open Controls mark. The surrounding link carries the product name. */
 export function BrandMark({ className = "" }: { className?: string }) {
   return (
-    <span
+    // The same vector is used for the browser tab icon.
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      alt=""
       aria-hidden="true"
-      className={cn(
-        "inline-flex size-7 shrink-0 items-center justify-center rounded-[0.5625rem] bg-(--accent)",
-        className,
-      )}
-    >
-      <svg
-        fill="none"
-        height="16"
-        stroke="#fff"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="2.4"
-        viewBox="0 0 24 24"
-        width="16"
-      >
-        <path d="M4 16c3 0 4-8 7-8s2 7 5 7 2-3 4-3" />
-      </svg>
-    </span>
+      className={cn("size-7 shrink-0 dark:invert", className)}
+      height={28}
+      src="/icon.svg"
+      width={28}
+    />
   );
 }

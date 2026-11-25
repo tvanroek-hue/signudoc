@@ -1,10 +1,11 @@
+import type { EnvelopeDeliveryRecipient } from "@/components/envelopes/envelope-delivery-panel";
 import {
   EnvelopeDetailShell,
   type EnvelopeDeletionNotice,
 } from "@/components/envelopes/envelope-detail-shell";
 import { isAdminUser } from "@/lib/auth/admin";
 import { getAuthSession } from "@/lib/auth/server";
-import { getDb } from "@/lib/db/connection";
+import { getDb, queryMany } from "@/lib/db/connection";
 import {
   formatEnvelopeOwner,
   resolveEnvelopeViewerAccess,
@@ -36,6 +37,7 @@ export default async function EnvelopeDetailPage({
   let canDeleteFinished = false;
   let ownerLabel: string | undefined;
   let ownerListView: "all" | "team" = "all";
+  let deliveryRecipients: EnvelopeDeliveryRecipient[] = [];
   let scheduledDeletion: EnvelopeDeletionNotice | undefined;
 
   try {
@@ -48,6 +50,24 @@ export default async function EnvelopeDetailPage({
     detailRecord = access
       ? await getEnvelopeDetailDataForUser(access.ownerUserId, id, getDb())
       : null;
+    if (access?.viewerIsOwner && detailRecord) {
+      deliveryRecipients = await queryMany<EnvelopeDeliveryRecipient>(
+        getDb(),
+        `SELECT s.id, s.email, d.status,
+           EXISTS (SELECT 1 FROM recipient_download_tokens t
+             WHERE t.envelope_id = s.envelope_id AND t.signer_id = s.id) AS "hasDownloadLink"
+         FROM signers s
+         LEFT JOIN LATERAL (
+           SELECT status FROM signing_email_deliveries d
+           WHERE d.envelope_id = s.envelope_id AND d.signer_id = s.id
+           ORDER BY d.created_at DESC, d.id DESC LIMIT 1
+         ) d ON true
+         WHERE s.envelope_id = $1
+           AND (d.status IS NOT NULL OR $2::boolean AND (s.status = 'signed' OR s.role = 'cc'))
+         ORDER BY s.sign_order, s.id`,
+        [id, detailRecord.status === "completed"],
+      );
+    }
     initialState = detailRecord ? undefined : "not-found";
     ownerLabel =
       access && !access.viewerIsOwner ? formatEnvelopeOwner(access) : undefined;
@@ -82,6 +102,7 @@ export default async function EnvelopeDetailPage({
     <EnvelopeDetailShell
       canDeleteFinished={canDeleteFinished}
       envelopeId={id}
+      deliveryRecipients={deliveryRecipients}
       initialState={initialState}
       key={id}
       ownerLabel={ownerLabel}

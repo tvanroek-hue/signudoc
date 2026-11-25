@@ -98,6 +98,7 @@ export async function enqueueWebhookDeliveries(
         id, $1, $2, $3, $4, 'pending', 0, $5, $6, $6
       FROM webhook_endpoints
       WHERE enabled AND $1 = ANY(events)
+        AND NOT EXISTS (SELECT 1 FROM envelopes WHERE id = $2 AND confidential)
       -- An endpoint being removed at this moment is waited for and then
       -- skipped, instead of failing this envelope's change on the foreign
       -- key once the removal commits. The lock also keeps a matching

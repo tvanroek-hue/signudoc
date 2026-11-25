@@ -35,3 +35,20 @@ test("a PDF with more pages than the limit is refused, one at the limit is taken
 
   assert.equal(imported.pageCount, MAX_PDF_PAGES);
 });
+
+test("rejects PDFs with embedded files", async () => {
+  const document = await PDFDocument.create();
+  document.addPage();
+  await document.attach(new Uint8Array([65]), "attachment.txt");
+
+  await assert.rejects(
+    importPdfDocument({
+      body: await document.save(),
+      contentType: "application/pdf",
+      filename: "with-attachment.pdf",
+    }),
+    (error: unknown) =>
+      error instanceof DocumentImportError &&
+      error.code === "unsupported_variant",
+  );
+});

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { PDFDocument } from "pdf-lib";
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFStream } from "pdf-lib";
 
 import type { EnvelopePageRecord } from "../schemas/envelope.ts";
 import { MAX_PDF_PAGES, MAX_UPLOAD_SIZE_BYTES } from "../types/domain.ts";
@@ -146,6 +146,66 @@ function maybeContainsEncrypt(body: Uint8Array): boolean {
   return prefix.includes("/Encrypt");
 }
 
+const BLOCKED_PDF_KEYS = new Set([
+  "AA",
+  "EF",
+  "EmbeddedFiles",
+  "JavaScript",
+  "JS",
+  "RichMediaContent",
+  "XFA",
+]);
+const BLOCKED_PDF_ACTIONS = new Set([
+  "JavaScript",
+  "Launch",
+  "SubmitForm",
+  "ImportData",
+  "GoToE",
+]);
+const BLOCKED_PDF_SUBTYPES = new Set([
+  "FileAttachment",
+  "RichMedia",
+  "Screen",
+  "Movie",
+  "Sound",
+  "3D",
+]);
+
+/** Inspect parsed PDF objects, including dictionaries in compressed object streams. */
+function assertNoActivePdfContent(document: PDFDocument): void {
+  const remaining = document.context
+    .enumerateIndirectObjects()
+    .map(([, object]) => object);
+  const seen = new Set();
+
+  while (remaining.length) {
+    const object = remaining.pop();
+    if (!object || seen.has(object)) continue;
+    seen.add(object);
+
+    if (object instanceof PDFStream) {
+      remaining.push(object.dict);
+    } else if (object instanceof PDFArray) {
+      remaining.push(...object.asArray());
+    } else if (object instanceof PDFDict) {
+      for (const [name, value] of object.entries()) {
+        const key = name.decodeText();
+        const resolved = document.context.lookup(value);
+        const decoded =
+          resolved instanceof PDFName ? resolved.decodeText() : null;
+        if (
+          BLOCKED_PDF_KEYS.has(key) ||
+          (key === "S" && decoded && BLOCKED_PDF_ACTIONS.has(decoded)) ||
+          (key === "Subtype" && decoded && BLOCKED_PDF_SUBTYPES.has(decoded))
+        ) {
+          throw new DocumentImportError("unsupported_variant");
+        }
+        remaining.push(value);
+      }
+    }
+  }
+}
+
 async function parsePdfDocument(
   body: Uint8Array,
 ): Promise<{ pages: ImportedPdfPage[]; pureXfa: boolean }> {
@@ -156,6 +216,8 @@ async function parsePdfDocument(
   if (document.getPageCount() > MAX_PDF_PAGES) {
     throw new DocumentImportError("too_many_pages");
   }
+
+  assertNoActivePdfContent(document);
 
   // The size of each page as a reader shows it: the CropBox, with width and
   // height swapped on a page rotated a quarter turn. The field overlay is

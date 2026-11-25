@@ -14,7 +14,12 @@ import {
   type SetupState,
 } from "./settings.ts";
 import { suggestSignupPolicy } from "./signup-policy.ts";
-import { getEnv, isHostedMode, type EnvSource } from "./utils/env.ts";
+import {
+  getEnv,
+  isHostedMode,
+  isProduction,
+  type EnvSource,
+} from "./utils/env.ts";
 
 // First-run setup: the step that turns a deployment into someone's install.
 //
@@ -244,7 +249,7 @@ export function resolveSetupView(
   if (state.status === "fresh") {
     return {
       asksForSupportAddress,
-      requiresToken: tokenConfigured,
+      requiresToken: tokenConfigured || isProduction(env),
       senderAddressFromEnv: appEnv.email.senderAddress !== undefined,
       view: "create",
     };
@@ -264,6 +269,13 @@ function assertSetupToken(
   env: EnvSource,
 ) {
   const expectedToken = getEnv(env).setup.token;
+
+  if (expectedToken === undefined && isProduction(env)) {
+    throw new SetupError(
+      "Set SETUP_TOKEN on this deployment and redeploy before creating an administrator.",
+      503,
+    );
+  }
 
   if (state.status === "unclaimed" && expectedToken === undefined) {
     throw new SetupError(

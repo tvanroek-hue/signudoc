@@ -8,8 +8,12 @@ import { openTestDatabase } from "./db/test-database.ts";
 import {
   createRecipientDownloadLink,
   DownloadAccessError,
+  DownloadCodeRequiredError,
+  getPublicEnvelopeDownloadForToken,
   renewRecipientDownloadLinks,
 } from "./downloads.ts";
+import { changeCompletedDownloadAccess } from "./signing.ts";
+import { hashAccessCode } from "./signer-checks.ts";
 import { hashOpaqueToken } from "./services/opaque-tokens.ts";
 
 // Renewing a signer's download links, against a real Postgres: the point is
@@ -75,7 +79,7 @@ async function createFinishedEnvelope() {
     { database },
   );
 
-  return { envelopeId, evidence, signed, signerId };
+  return { envelopeId, evidence, signed, signerId, userId };
 }
 
 async function storedHashes(envelopeId: string, signerId: string) {
@@ -248,4 +252,55 @@ test("when the email does not go out the old links are put back, and the signer 
     evidence: hashOfLink(sent[1] ?? null),
     signed: hashOfLink(sent[0] ?? null),
   });
+});
+
+test("a protected download requires the access code and an owner can revoke both links", async () => {
+  const { envelopeId, evidence, signed, signerId, userId } =
+    await createFinishedEnvelope();
+  await database.query(
+    "UPDATE signers SET access_code_hash = $2 WHERE id = $1",
+    [signerId, hashAccessCode("246810")],
+  );
+
+  await assert.rejects(
+    getPublicEnvelopeDownloadForToken(signed.token, { database }),
+    DownloadCodeRequiredError,
+  );
+  await assert.rejects(
+    getPublicEnvelopeDownloadForToken(evidence.token, {
+      database,
+      accessCode: "111111",
+    }),
+    DownloadCodeRequiredError,
+  );
+  assert.equal(
+    await changeCompletedDownloadAccess(
+      randomUUID(),
+      envelopeId,
+      signerId,
+      "revoke",
+      database,
+    ),
+    false,
+  );
+  assert.equal(
+    await changeCompletedDownloadAccess(
+      userId,
+      envelopeId,
+      signerId,
+      "revoke",
+      database,
+    ),
+    true,
+  );
+  for (const { token } of [signed, evidence]) {
+    await assert.rejects(
+      getPublicEnvelopeDownloadForToken(token, {
+        database,
+        accessCode: "246810",
+      }),
+      (error: unknown) =>
+        error instanceof DownloadAccessError && error.statusCode === 410,
+    );
+  }
 });

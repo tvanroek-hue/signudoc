@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 import pg from "pg";
 
@@ -648,20 +649,18 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
 
     expect(downloadLinks.length).toBeGreaterThanOrEqual(1);
 
-    for (const downloadLink of downloadLinks) {
-      await expectPdfResponse(await recipientContext.request.get(downloadLink));
-    }
+    const signedCopy = await recipientContext.request.get(downloadLinks[0]!, {
+      maxRedirects: 0,
+    });
+    await expectPdfResponse(signedCopy);
 
-    // The signer's copy comes attached, and the Verify page knows it.
-    const signedAttachment = completionEmail.attachments?.find(
-      (attachment) => !attachment.filename.includes("certificate"),
-    );
-
-    expect(completionEmail.attachments?.length).toBe(2);
-    expect(signedAttachment).toBeDefined();
-
+    expect(completionEmail.attachments ?? []).toHaveLength(0);
     const verification = await recipientContext.request.post("/api/verify", {
-      data: { sha256: signedAttachment?.sha256 },
+      data: {
+        sha256: createHash("sha256")
+          .update(await signedCopy.body())
+          .digest("hex"),
+      },
     });
 
     expect(verification.ok()).toBe(true);
@@ -676,7 +675,7 @@ test("a new install is set up, a sender sends a PDF and a recipient signs it", a
       to: copyEmail,
     });
 
-    expect(copyEmailMessage.attachments?.length).toBe(2);
+    expect(copyEmailMessage.attachments ?? []).toHaveLength(0);
     expect(
       extractLinks(copyEmailMessage.text).some((link) =>
         new URL(link).pathname.startsWith("/sign/"),

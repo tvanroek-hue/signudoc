@@ -48,6 +48,7 @@ export const reminderIntervalDaysSchema = z
 
 /** What the sender chooses on the last step before sending. */
 export const sendEnvelopeOptionsSchema = z.object({
+  confidential: z.boolean().optional(),
   expiresInDays: deadlineDaysSchema.optional(),
   reminderIntervalDays: reminderIntervalDaysSchema.optional(),
   /** Simple unless the install has a signing provider. */
