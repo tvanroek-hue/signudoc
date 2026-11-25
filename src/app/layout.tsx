@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Plus_Jakarta_Sans } from "next/font/google";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { AGREEMENTS_NAME } from "@/lib/branding";
 
 import "./globals.css";
 
@@ -13,12 +14,9 @@ const plusJakartaSans = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "SignuDoc",
+  title: AGREEMENTS_NAME,
   description:
-    "Free e-signature software for small businesses. Upload, send, sign — no enterprise circus required.",
-  icons: {
-    icon: "/icon.svg",
-  },
+    "Prepare, send, and track business agreements and electronic signatures.",
 };
 
 export default function RootLayout({

@@ -10,6 +10,7 @@ import type { ResolvedSettings } from "./settings.ts";
 // pages. An install's own logo and color are not used there.
 
 export const SIGNUDOC_NAME = "SignuDoc";
+export const AGREEMENTS_NAME = "Open-Controls Agreements";
 // The project's home is its repository. There is no SignuDoc-run site that
 // an install should send its visitors to, and no address there to write to.
 export const SIGNUDOC_URL = "https://github.com/NYLLON-SOFTWARE/SignuDoc";
@@ -83,6 +84,8 @@ export function buildBranding(settings: ResolvedSettings): Branding {
   }
 
   const organizationName = settings.organizationName?.trim() || null;
+  const usesOpenControlsBrand =
+    !organizationName || /^open[- ]controls(?:™)?$/i.test(organizationName);
 
   return {
     brandColor: normalizeBrandColor(settings.brandColor),
@@ -94,7 +97,7 @@ export function buildBranding(settings: ResolvedSettings): Branding {
         : buildBrandLogoPath(settings.logoVersion),
     organizationName,
     privacyUrl: settings.privacyUrl,
-    productName: organizationName ?? SIGNUDOC_NAME,
+    productName: usesOpenControlsBrand ? AGREEMENTS_NAME : organizationName,
     signupAvailable,
     supportAddress: settings.supportAddress,
     termsUrl: settings.termsUrl,

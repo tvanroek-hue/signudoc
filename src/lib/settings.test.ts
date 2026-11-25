@@ -58,6 +58,15 @@ test("email addresses set in the environment win over the stored ones", () => {
   assert.equal(settings.supportAddressFromEnv, true);
 });
 
+test("an Open Controls organization retains its legal name and uses the product name", () => {
+  const branding = buildBranding(
+    resolveSettings({ ...stored, organizationName: "Open Controls™" }, {}),
+  );
+
+  assert.equal(branding.organizationName, "Open Controls™");
+  assert.equal(branding.productName, "Open-Controls Agreements");
+});
+
 test("hosted mode is switched on by HOSTED_MODE", () => {
   assert.equal(resolveSettings(null, { HOSTED_MODE: "1" }).hosted, true);
   assert.equal(resolveSettings(null, { HOSTED_MODE: "true" }).hosted, true);
@@ -91,10 +100,10 @@ test("a neutral install goes by the organization's name and links", () => {
   });
 });
 
-test("a neutral install with no name yet goes by SignuDoc and has no legal links", () => {
+test("a neutral install with no name yet uses Open-Controls Agreements and has no legal links", () => {
   const branding = buildBranding(resolveSettings(null, {}));
 
-  assert.equal(branding.productName, "SignuDoc");
+  assert.equal(branding.productName, "Open-Controls Agreements");
   assert.equal(branding.organizationName, null);
   assert.equal(branding.termsUrl, null);
   assert.equal(branding.privacyUrl, null);
